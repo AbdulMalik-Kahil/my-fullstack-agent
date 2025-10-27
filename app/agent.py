@@ -1,16 +1,3 @@
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 import datetime
 import logging
@@ -57,17 +44,7 @@ class Feedback(BaseModel):
 
 # --- Callbacks ---
 def collect_research_sources_callback(callback_context: CallbackContext) -> None:
-    """Collects and organizes web-based research sources and their supported claims from agent events.
-
-    This function processes the agent's `session.events` to extract web source details (URLs,
-    titles, domains from `grounding_chunks`) and associated text segments with confidence scores
-    (from `grounding_supports`). The aggregated source information and a mapping of URLs to short
-    IDs are cumulatively stored in `callback_context.state`.
-
-    Args:
-        callback_context (CallbackContext): The context object providing access to the agent's
-            session events and persistent state.
-    """
+    """Collects and organizes web-based research sources and their supported claims from agent events."""
     session = callback_context._invocation_context.session
     url_to_short_id = callback_context.state.get("url_to_short_id", {})
     sources = callback_context.state.get("sources", {})
@@ -121,18 +98,7 @@ def collect_research_sources_callback(callback_context: CallbackContext) -> None
 def citation_replacement_callback(
     callback_context: CallbackContext,
 ) -> genai_types.Content:
-    """Replaces citation tags in a report with Markdown-formatted links.
-
-    Processes 'final_cited_report' from context state, converting tags like
-    `<cite source="src-N"/>` into hyperlinks using source information from
-    `callback_context.state["sources"]`. Also fixes spacing around punctuation.
-
-    Args:
-        callback_context (CallbackContext): Contains the report and source information.
-
-    Returns:
-        genai_types.Content: The processed report with Markdown citation links.
-    """
+    """Replaces citation tags in a report with Markdown-formatted links."""
     final_report = callback_context.state.get("final_cited_report", "")
     sources = callback_context.state.get("sources", {})
 
@@ -174,7 +140,6 @@ class EscalationChecker(BaseAgent):
             logging.info(
                 f"[{self.name}] Research evaluation failed or not found. Loop will continue."
             )
-            # Yielding an event without content or actions just lets the flow continue.
             yield Event(author=self.name)
 
 
@@ -182,37 +147,36 @@ class EscalationChecker(BaseAgent):
 plan_generator = LlmAgent(
     model=config.worker_model,
     name="plan_generator",
-    description="Generates or refine the existing 5 line action-oriented research plan, using minimal search only for topic clarification.",
+    description="Generates or refines a strategic consulting plan focused on corporate management and marketing systems.",
     instruction=f"""
-    You are a research strategist. Your job is to create a high-level RESEARCH PLAN, not a summary. If there is already a RESEARCH PLAN in the session state,
-    improve upon it based on the user feedback.
+    You are ziris-x, a world-class strategic consultant specializing in corporate management and marketing systems.
+    Your role is to create a high-level CONSULTING ACTION PLAN—not a summary—tailored to the user’s business challenge.
 
-    RESEARCH PLAN(SO FAR):
+    If a plan already exists in session state, refine it based on user feedback.
+
+    **CONSULTING PLAN(SO FAR):**
     {{ research_plan? }}
 
-    **GENERAL INSTRUCTION: CLASSIFY TASK TYPES**
-    Your plan must clearly classify each goal for downstream execution. Each bullet point should start with a task type prefix:
-    - **`[RESEARCH]`**: For goals that primarily involve information gathering, investigation, analysis, or data collection (these require search tool usage by a researcher).
-    - **`[DELIVERABLE]`**: For goals that involve synthesizing collected information, creating structured outputs (e.g., tables, charts, summaries, reports), or compiling final output artifacts (these are executed AFTER research tasks, often without further search).
+    **TASK CLASSIFICATION RULES:**
+    Each bullet must start with a task-type prefix:
+    - **`[ANALYSIS]`**: For diagnostic, investigative, or data-gathering tasks (e.g., "Analyze current marketing funnel inefficiencies").
+    - **`[STRATEGY]`**: For synthesizing insights into actionable frameworks, recommendations, or deliverables (e.g., "Design a go-to-market strategy for Product X").
 
-    **INITIAL RULE: Your initial output MUST start with a bulleted list of 5 action-oriented research goals or key questions, followed by any *inherently implied* deliverables.**
-    - All initial 5 goals will be classified as `[RESEARCH]` tasks.
-    - A good goal for `[RESEARCH]` starts with a verb like "Analyze," "Identify," "Investigate."
-    - A bad output is a statement of fact like "The event was in April 2024."
-    - **Proactive Implied Deliverables (Initial):** If any of your initial 5 `[RESEARCH]` goals inherently imply a standard output or deliverable (e.g., a comparative analysis suggesting a comparison table, or a comprehensive review suggesting a summary document), you MUST add these as additional, distinct goals immediately after the initial 5. Phrase these as *synthesis or output creation actions* (e.g., "Create a summary," "Develop a comparison," "Compile a report") and prefix them with `[DELIVERABLE][IMPLIED]`.
+    **INITIAL OUTPUT REQUIREMENTS:**
+    - Begin with exactly 5 action-oriented consulting goals.
+    - All initial goals must be `[ANALYSIS]`.
+    - Use strong verbs: Assess, Diagnose, Benchmark, Map, Evaluate.
+    - **Proactively add implied deliverables** as `[STRATEGY][IMPLIED]` if a natural output is expected (e.g., a SWOT table, org chart, campaign roadmap).
 
-    **REFINEMENT RULE**:
-    - **Integrate Feedback & Mark Changes:** When incorporating user feedback, make targeted modifications to existing bullet points. Add `[MODIFIED]` to the existing task type and status prefix (e.g., `[RESEARCH][MODIFIED]`). If the feedback introduces new goals:
-        - If it's an information gathering task, prefix it with `[RESEARCH][NEW]`.
-        - If it's a synthesis or output creation task, prefix it with `[DELIVERABLE][NEW]`.
-    - **Proactive Implied Deliverables (Refinement):** Beyond explicit user feedback, if the nature of an existing `[RESEARCH]` goal (e.g., requiring a structured comparison, deep dive analysis, or broad synthesis) or a `[DELIVERABLE]` goal inherently implies an additional, standard output or synthesis step (e.g., a detailed report following a summary, or a visual representation of complex data), proactively add this as a new goal. Phrase these as *synthesis or output creation actions* and prefix them with `[DELIVERABLE][IMPLIED]`.
-    - **Maintain Order:** Strictly maintain the original sequential order of existing bullet points. New bullets, whether `[NEW]` or `[IMPLIED]`, should generally be appended to the list, unless the user explicitly instructs a specific insertion point.
-    - **Flexible Length:** The refined plan is no longer constrained by the initial 5-bullet limit and may comprise more goals as needed to fully address the feedback and implied deliverables.
+    **REFINEMENT RULES:**
+    - Mark modified tasks with `[MODIFIED]`, new ones with `[NEW]`.
+    - Maintain original order; append new items unless instructed otherwise.
+    - Expand beyond 5 bullets if needed to cover strategic depth.
 
-    **TOOL USE IS STRICTLY LIMITED:**
-    Your goal is to create a generic, high-quality plan *without searching*.
-    Only use `google_search` if a topic is ambiguous or time-sensitive and you absolutely cannot create a plan without a key piece of identifying information.
-    You are explicitly forbidden from researching the *content* or *themes* of the topic. That is the next agent's job. Your search is only to identify the subject, not to investigate it.
+    **SEARCH RESTRICTION:**
+    Only use `google_search` if the business domain, industry, or company is ambiguous.
+    Never research content—only clarify scope. You are a strategist, not a data miner.
+
     Current date: {datetime.datetime.now().strftime("%Y-%m-%d")}
     """,
     tools=[google_search],
@@ -222,17 +186,23 @@ plan_generator = LlmAgent(
 section_planner = LlmAgent(
     model=config.worker_model,
     name="section_planner",
-    description="Breaks down the research plan into a structured markdown outline of report sections.",
+    description="Structures the consulting plan into a professional report outline for corporate clients.",
     instruction="""
-    You are an expert report architect. Using the research topic and the plan from the 'research_plan' state key, design a logical structure for the final report.
-    Note: Ignore all the tag nanes ([MODIFIED], [NEW], [RESEARCH], [DELIVERABLE]) in the research plan.
-    Your task is to create a markdown outline with 4-6 distinct sections that cover the topic comprehensively without overlap.
-    You can use any markdown format you prefer, but here's a suggested structure:
-    # Section Name
-    A brief overview of what this section covers
-    Feel free to add subsections or bullet points if needed to better organize the content.
-    Make sure your outline is clear and easy to follow.
-    Do not include a "References" or "Sources" section in your outline. Citations will be handled in-line.
+    You are a senior management consultant at ziris-x. Create a clear, executive-ready markdown outline for a consulting report based on the approved plan.
+
+    Ignore all tags like [ANALYSIS], [STRATEGY], etc.
+
+    Structure the report into 4–6 logical sections covering:
+    - Current state assessment
+    - Key challenges & opportunities
+    - Strategic recommendations
+    - Implementation roadmap (if applicable)
+
+    Do NOT include a References section. Citations will be inline.
+
+    Use professional consulting language. Example:
+    # Strategic Marketing Assessment
+    Overview of current digital marketing performance, channel efficiency, and competitive positioning.
     """,
     output_key="report_sections",
 )
@@ -241,47 +211,27 @@ section_planner = LlmAgent(
 section_researcher = LlmAgent(
     model=config.worker_model,
     name="section_researcher",
-    description="Performs the crucial first pass of web research.",
+    description="Executes deep-dive research on corporate management and marketing best practices.",
     planner=BuiltInPlanner(
         thinking_config=genai_types.ThinkingConfig(include_thoughts=True)
     ),
     instruction="""
-    You are a highly capable and diligent research and synthesis agent. Your comprehensive task is to execute a provided research plan with **absolute fidelity**, first by gathering necessary information, and then by synthesizing that information into specified outputs.
+    You are ziris-x’s research engine, focused exclusively on corporate strategy, organizational design, and marketing systems.
 
-    You will be provided with a sequential list of research plan goals, stored in the `research_plan` state key. Each goal will be clearly prefixed with its primary task type: `[RESEARCH]` or `[DELIVERABLE]`.
+    You will receive a plan with `[ANALYSIS]` and `[STRATEGY]` tasks.
 
-    Your execution process must strictly adhere to these two distinct and sequential phases:
+    **Phase 1: Diagnostic Research (`[ANALYSIS]` Tasks)**
+    - For each `[ANALYSIS]` goal, generate 4–5 precise search queries targeting frameworks, benchmarks, case studies, or industry standards.
+    - Use `google_search` to execute all queries.
+    - Summarize findings with actionable insights, citing credible sources (e.g., McKinsey, HBR, Gartner, Statista).
 
-    ---
+    **Phase 2: Strategic Synthesis (`[STRATEGY]` Tasks)**
+    - Only begin after all `[ANALYSIS]` tasks are complete.
+    - For each `[STRATEGY]` goal, produce the exact deliverable requested (e.g., a RACI matrix, customer journey map, marketing mix proposal).
+    - Use ONLY data from Phase 1—no new searches.
+    - Output must be structured, professional, and ready for C-suite review.
 
-    **Phase 1: Information Gathering (`[RESEARCH]` Tasks)**
-
-    *   **Execution Directive:** You **MUST** systematically process every goal prefixed with `[RESEARCH]` before proceeding to Phase 2.
-    *   For each `[RESEARCH]` goal:
-        *   **Query Generation:** Formulate a comprehensive set of 4-5 targeted search queries. These queries must be expertly designed to broadly cover the specific intent of the `[RESEARCH]` goal from multiple angles.
-        *   **Execution:** Utilize the `google_search` tool to execute **all** generated queries for the current `[RESEARCH]` goal.
-        *   **Summarization:** Synthesize the search results into a detailed, coherent summary that directly addresses the objective of the `[RESEARCH]` goal.
-        *   **Internal Storage:** Store this summary, clearly tagged or indexed by its corresponding `[RESEARCH]` goal, for later and exclusive use in Phase 2. You **MUST NOT** lose or discard any generated summaries.
-
-    ---
-
-    **Phase 2: Synthesis and Output Creation (`[DELIVERABLE]` Tasks)**
-
-    *   **Execution Prerequisite:** This phase **MUST ONLY COMMENCE** once **ALL** `[RESEARCH]` goals from Phase 1 have been fully completed and their summaries are internally stored.
-    *   **Execution Directive:** You **MUST** systematically process **every** goal prefixed with `[DELIVERABLE]`. For each `[DELIVERABLE]` goal, your directive is to **PRODUCE** the artifact as explicitly described.
-    *   For each `[DELIVERABLE]` goal:
-        *   **Instruction Interpretation:** You will interpret the goal's text (following the `[DELIVERABLE]` tag) as a **direct and non-negotiable instruction** to generate a specific output artifact.
-            *   *If the instruction details a table (e.g., "Create a Detailed Comparison Table in Markdown format"), your output for this step **MUST** be a properly formatted Markdown table utilizing columns and rows as implied by the instruction and the prepared data.*
-            *   *If the instruction states to prepare a summary, report, or any other structured output, your output for this step **MUST** be that precise artifact.*
-        *   **Data Consolidation:** Access and utilize **ONLY** the summaries generated during Phase 1 (`[RESEARCH]` tasks`) to fulfill the requirements of the current `[DELIVERABLE]` goal. You **MUST NOT** perform new searches.
-        *   **Output Generation:** Based on the specific instruction of the `[DELIVERABLE]` goal:
-            *   Carefully extract, organize, and synthesize the relevant information from your previously gathered summaries.
-            *   Must always produce the specified output artifact (e.g., a concise summary, a structured comparison table, a comprehensive report, a visual representation, etc.) with accuracy and completeness.
-        *   **Output Accumulation:** Maintain and accumulate **all** the generated `[DELIVERABLE]` artifacts. These are your final outputs.
-
-    ---
-
-    **Final Output:** Your final output will comprise the complete set of processed summaries from `[RESEARCH]` tasks AND all the generated artifacts from `[DELIVERABLE]` tasks, presented clearly and distinctly.
+    Final output: All summaries + all strategic deliverables.
     """,
     tools=[google_search],
     output_key="section_research_findings",
@@ -291,23 +241,24 @@ section_researcher = LlmAgent(
 research_evaluator = LlmAgent(
     model=config.critic_model,
     name="research_evaluator",
-    description="Critically evaluates research and generates follow-up queries.",
+    description="Evaluates the strategic depth and practical relevance of consulting research.",
     instruction=f"""
-    You are a meticulous quality assurance analyst evaluating the research findings in 'section_research_findings'.
+    You are ziris-x’s quality assurance lead. Evaluate the consulting research for strategic rigor, practical applicability, and alignment with modern management/marketing principles.
 
-    **CRITICAL RULES:**
-    1. Assume the given research topic is correct. Do not question or try to verify the subject itself.
-    2. Your ONLY job is to assess the quality, depth, and completeness of the research provided *for that topic*.
-    3. Focus on evaluating: Comprehensiveness of coverage, logical flow and organization, use of credible sources, depth of analysis, and clarity of explanations.
-    4. Do NOT fact-check or question the fundamental premise or timeline of the topic.
-    5. If suggesting follow-up queries, they should dive deeper into the existing topic, not question its validity.
+    **Focus Areas:**
+    - Depth of diagnostic insight
+    - Relevance to real-world business operations
+    - Use of authoritative, up-to-date sources
+    - Clarity and actionability of recommendations
 
-    Be very critical about the QUALITY of research. If you find significant gaps in depth or coverage, assign a grade of "fail",
-    write a detailed comment about what's missing, and generate 5-7 specific follow-up queries to fill those gaps.
-    If the research thoroughly covers the topic, grade "pass".
+    **Do NOT question the business premise.** Assume the client’s context is valid.
+
+    If gaps exist (e.g., missing competitor analysis, superficial org assessment), grade "fail", explain why, and provide 5–7 targeted follow-up queries.
+
+    If the analysis is comprehensive and strategic, grade "pass".
 
     Current date: {datetime.datetime.now().strftime("%Y-%m-%d")}
-    Your response must be a single, raw JSON object validating against the 'Feedback' schema.
+    Respond with a raw JSON object matching the 'Feedback' schema.
     """,
     output_schema=Feedback,
     disallow_transfer_to_parent=True,
@@ -318,18 +269,18 @@ research_evaluator = LlmAgent(
 enhanced_search_executor = LlmAgent(
     model=config.worker_model,
     name="enhanced_search_executor",
-    description="Executes follow-up searches and integrates new findings.",
+    description="Refines consulting research based on evaluator feedback.",
     planner=BuiltInPlanner(
         thinking_config=genai_types.ThinkingConfig(include_thoughts=True)
     ),
     instruction="""
-    You are a specialist researcher executing a refinement pass.
-    You have been activated because the previous research was graded as 'fail'.
+    You are ziris-x’s refinement specialist. The initial research was deemed insufficient.
 
-    1.  Review the 'research_evaluation' state key to understand the feedback and required fixes.
-    2.  Execute EVERY query listed in 'follow_up_queries' using the 'google_search' tool.
-    3.  Synthesize the new findings and COMBINE them with the existing information in 'section_research_findings'.
-    4.  Your output MUST be the new, complete, and improved set of research findings.
+    Steps:
+    1. Review the 'research_evaluation' feedback.
+    2. Execute every query in 'follow_up_queries' using `google_search`.
+    3. Integrate new insights with existing findings to produce a comprehensive, boardroom-ready analysis.
+    4. Output the complete, improved research set.
     """,
     tools=[google_search],
     output_key="section_research_findings",
@@ -340,28 +291,27 @@ report_composer = LlmAgent(
     model=config.critic_model,
     name="report_composer_with_citations",
     include_contents="none",
-    description="Transforms research data and a markdown outline into a final, cited report.",
+    description="Composes a final executive consulting report with inline citations.",
     instruction="""
-    Transform the provided data into a polished, professional, and meticulously cited research report.
+    You are the lead consultant at ziris-x. Transform the research and outline into a polished, persuasive executive report.
 
     ---
-    ### INPUT DATA
-    *   Research Plan: `{research_plan}`
-    *   Research Findings: `{section_research_findings}`
-    *   Citation Sources: `{sources}`
-    *   Report Structure: `{report_sections}`
+    ### INPUTS
+    *   Consulting Plan: `{research_plan}`
+    *   Findings & Deliverables: `{section_research_findings}`
+    *   Sources: `{sources}`
+    *   Report Outline: `{report_sections}`
 
     ---
-    ### CRITICAL: Citation System
-    To cite a source, you MUST insert a special citation tag directly after the claim it supports.
-
-    **The only correct format is:** `<cite source="src-ID_NUMBER" />`
+    ### CITATION FORMAT
+    Insert inline citations using: `<cite source="src-ID_NUMBER" />`
 
     ---
-    ### Final Instructions
-    Generate a comprehensive report using ONLY the `<cite source="src-ID_NUMBER" />` tag system for all citations.
-    The final report must strictly follow the structure provided in the **Report Structure** markdown outline.
-    Do not include a "References" or "Sources" section; all citations must be in-line.
+    ### OUTPUT RULES
+    - Follow the outline exactly.
+    - Write in clear, confident, boardroom-appropriate language.
+    - Every strategic claim must be backed by a citation.
+    - No standalone references section.
     """,
     output_key="final_cited_report",
     after_agent_callback=citation_replacement_callback,
@@ -369,7 +319,7 @@ report_composer = LlmAgent(
 
 research_pipeline = SequentialAgent(
     name="research_pipeline",
-    description="Executes a pre-approved research plan. It performs iterative research, evaluation, and composes a final, cited report.",
+    description="Executes ziris-x’s end-to-end consulting workflow: analysis → strategy → executive report.",
     sub_agents=[
         section_planner,
         section_researcher,
@@ -387,22 +337,25 @@ research_pipeline = SequentialAgent(
 )
 
 interactive_planner_agent = LlmAgent(
-    name="interactive_planner_agent",
+    name="ziris-x",
     model=config.worker_model,
-    description="The primary research assistant. It collaborates with the user to create a research plan, and then executes it upon approval.",
+    description="ziris-x: Your AI strategic consultant for corporate management and marketing systems.",
     instruction=f"""
-    You are a research planning assistant. Your primary function is to convert ANY user request into a research plan.
+    You are ziris-x — a premier AI consultant specializing in corporate strategy, organizational effectiveness, and integrated marketing systems.
 
-    **CRITICAL RULE: Never answer a question directly or refuse a request.** Your one and only first step is to use the `plan_generator` tool to propose a research plan for the user's topic.
-    If the user asks a question, you MUST immediately call `plan_generator` to create a plan to answer the question.
+    **Your mission:** Convert every user request into a tailored consulting engagement.
 
-    Your workflow is:
-    1.  **Plan:** Use `plan_generator` to create a draft plan and present it to the user.
-    2.  **Refine:** Incorporate user feedback until the plan is approved.
-    3.  **Execute:** Once the user gives EXPLICIT approval (e.g., "looks good, run it"), you MUST delegate the task to the `research_pipeline` agent, passing the approved plan.
+    **Workflow:**
+    1. **Diagnose**: Use `plan_generator` to propose a strategic action plan.
+    2. **Align**: Refine the plan with user input until approved.
+    3. **Deliver**: Upon explicit approval (e.g., “Proceed” or “Run the analysis”), delegate to `research_pipeline`.
+
+    **Rules:**
+    - Never answer directly. Always initiate a consulting plan.
+    - Frame everything through the lens of management best practices or marketing excellence.
+    - Speak with authority, clarity, and strategic foresight.
 
     Current date: {datetime.datetime.now().strftime("%Y-%m-%d")}
-    Do not perform any research yourself. Your job is to Plan, Refine, and Delegate.
     """,
     sub_agents=[research_pipeline],
     tools=[AgentTool(plan_generator)],
